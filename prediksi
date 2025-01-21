@@ -1,0 +1,177 @@
+import time
+import telepot
+import random
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from datetime import datetime
+import pytz
+
+# Ganti token di bawah dengan token bot Telegram Anda
+BOT_TOKEN = '7397668885:AAHTkuCTk4cgYVc1bWiihoA_jNw23maybnU'
+GROUP_IDS = ['-1001460863353' , '-1001563835488' , '-1001746455399' ,'-1001666005121','-1001556899035' ,'-1001705114887']
+
+def send_message_to_telegram(message):
+    bot = telepot.Bot(BOT_TOKEN)
+    for group_id in GROUP_IDS:
+        try:
+            bot.sendMessage(group_id, message)
+            print(f"Pesan berhasil dikirim ke grup {group_id} pada {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            print(f"Gagal mengirim pesan ke grup {group_id}: {str(e)}")
+
+def login(driver):
+    driver.get("https://62club.vip/#/login")
+
+    try:
+        user_number_input = WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Silakan masukkan nomor telepon']"))
+        )
+        password_input = driver.find_element(By.XPATH, "//input[@placeholder='Kata sandi']")
+
+        user_number_input.send_keys("85814710472")
+        password_input.send_keys("Riau1994")
+        password_input.send_keys(Keys.RETURN)
+
+        confirm_button = WebDriverWait(driver, 30).until(
+            EC.element_to_be_clickable((By.XPATH, "//span[@class='van-button__text' and text()='Konfirmasi']"))
+        )
+        driver.execute_script("arguments[0].click();", confirm_button)
+
+        # Setelah berhasil menutup pop-up, tunggu 3 detik sebelum melanjutkan
+        time.sleep(3)
+
+        # Arahkan langsung ke halaman WinGo
+        driver.get("https://62club.vip/#/home/AllLotteryGames/WinGo")
+        print("Berhasil menutup pop-up dan mengarahkan ke halaman WinGo.")
+
+        # Tambahkan langkah untuk mengklik elemen di halaman WinGo
+        clickable_element = WebDriverWait(driver, 30).until(
+            EC.element_to_be_clickable((By.XPATH, "/html/body/div[1]/div[2]/div[4]/div[2]/div"))
+        )
+        clickable_element.click()
+        print("Berhasil mengklik elemen di halaman WinGo.")
+
+    except TimeoutException as e:
+        print("Login gagal, mencoba kembali...")
+        send_message_to_telegram("Login gagal, mencoba kembali...")
+        login(driver)  # Coba login lagi
+
+def monitor_wingo(driver):
+    last_record_id = None
+    last_scroll_time = time.time()
+    bet_multiplier = 1  # Memulai multiplier dengan 1X
+    bet_sequence = [1, 3, 7, 15, 32, 65, 135]  # Urutan bet multiplier
+
+    while True:
+        try:
+            # Dapatkan waktu saat ini dalam WIB
+            tz = pytz.timezone('Asia/Jakarta')
+            now = datetime.now(tz)
+
+            # Mengambil ID langsung dari div dengan class "TimeLeft__C-id"
+            time_left_id_element = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//div[@class='TimeLeft__C-id']"))
+            )
+            new_id = time_left_id_element.text[-2:]  # Mengambil dua digit terakhir dari ID
+
+            # Mengambil hasil terbaru dari class "van-row"
+            latest_result_element = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "(//div[@class='GameRecord__C-body']//div[@class='van-row'])[1]//span"))
+            )
+            latest_result = latest_result_element.text.upper()  # Mengambil teks dan ubah ke huruf besar
+
+            # Jika game record terbaru telah didapatkan dan waktu detik ke-01, kirim pesan ke Telegram
+            if new_id != last_record_id and now.second == 1:
+                random_size = random.choice(["BESAR", "KECIL"])  # Random size dengan huruf besar
+
+                # Menentukan apakah menang atau kalah
+                if random_size == latest_result:
+                    result_message = "MENANG"
+                    bet_multiplier = 1  # Reset ke 1X jika menang
+                else:
+                    result_message = "KALAH"
+                    # Perbarui bet multiplier ke nilai berikutnya dalam urutan
+                    current_index = bet_sequence.index(bet_multiplier) if bet_multiplier in bet_sequence else -1
+                    if current_index < len(bet_sequence) - 1:
+                        bet_multiplier = bet_sequence[current_index + 1]
+                    else:
+                        # Jika sudah mencapai akhir urutan, gandakan nilai terakhir
+                        bet_multiplier *= 2
+                        result_message += f" (Kelipatan Tinggi: {bet_multiplier}X)"
+
+                # Membuat pesan sesuai format yang diinginkan
+                message = (f"🎲 WINGO 1MENIT 🎲\n\n"
+                           f"💡 REKOMENDASI:\n\n"
+                           f" {new_id}.  {random_size} {bet_multiplier}X\n\n"
+                           f"🚀 Gunakan kompensasi untuk meraup keuntungan!\n\n"
+                           f" Minimal modal 300.000 \n\n"
+                           f" DAFTAR - https://s.id/62_club \n\n"
+                           f"📝 Hasil Sebelumnya: {result_message}")
+
+                send_message_to_telegram(message)
+                last_record_id = new_id
+
+            # Lakukan scrolling otomatis jika sudah 3 menit sejak scrolling terakhir
+            if time.time() - last_scroll_time >= 180:
+                scroll_page(driver)
+                last_scroll_time = time.time()
+
+            time.sleep(1)  # Periksa waktu setiap detik
+
+        except (TimeoutException, NoSuchElementException) as e:
+            print(f"Error: {str(e)}")
+            driver.save_screenshot("screenshot.png")  # Ambil screenshot untuk debugging
+            send_message_to_telegram("Error terdeteksi, mencoba login kembali...")
+            login(driver)
+            continue
+
+def scroll_page(driver):
+    """Lakukan scrolling otomatis ke atas dan ke bawah secara perlahan selama 3 detik."""
+    scroll_pause_time = 0.05  # Waktu jeda antar scroll
+    scroll_duration = 3  # Durasi scrolling dalam detik
+    end_time = time.time() + scroll_duration
+
+    scroll_height = driver.execute_script("return document.body.scrollHeight")
+
+    while time.time() < end_time:
+        # Scroll ke bawah
+        driver.execute_script("window.scrollBy(0, 10);")
+        time.sleep(scroll_pause_time)
+
+        # Scroll ke atas
+        driver.execute_script("window.scrollBy(0, -10);")
+        time.sleep(scroll_pause_time)
+
+if __name__ == "__main__":
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")  # Aktifkan headless mode
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--log-level=3")
+    options.add_argument("--disable-logging")
+    options.add_argument("--no-sandbox")  # Opsi penting untuk menjalankan Chrome di lingkungan server
+    options.add_argument("--disable-dev-shm-usage")  # Mengatasi masalah ruang bersama yang terbatas
+    options.add_argument("--remote-debugging-port=9222")  # Mengatasi masalah DevToolsActivePort
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+    try:
+        login(driver)
+
+        # Tunggu 2 detik sebelum memulai pemantauan
+        time.sleep(2)
+        
+        # Mulai pemantauan game record
+        start_time = time.time()
+        while time.time() - start_time < 86400:
+            monitor_wingo(driver)
+
+    finally:
+        driver.quit()
