@@ -684,9 +684,11 @@ const addTrxWingo = async (game) => {
     if (game == 5) join = TRX_WINGO_GAME_TYPE_MAP.MIN_5;
     if (game == 10) join = TRX_WINGO_GAME_TYPE_MAP.MIN_10;
 
+    // console.log(join)
+
     const [trxWingoNow] = await connection.query(
       "SELECT period FROM trx_wingo_game WHERE status = 0 AND game = ? ORDER BY id DESC LIMIT 1",
-      [join]
+      [join],
     );
 
     const isPendingGame = trxWingoNow.length;
@@ -695,110 +697,94 @@ const addTrxWingo = async (game) => {
       : 0;
 
     if (isPendingGame) {
-      const [bets] = await connection.query(
-        "SELECT * FROM trx_wingo_bets WHERE game = ? AND period = ? AND money >= 50000",
-        [join, PendingGamePeriod]
-      );
+      // console.log("TRX WINGO GAME PENDING GAME INSERTIONS Start")
+      const isAdminManipulatedResult = false;
 
-      let forcedResult = null;
-
-      if (bets.length > 0) {
-        console.log(`💸 Ada taruhan >= 50.000 di game ${game} periode ${PendingGamePeriod}`);
-        console.table(bets.map(b => ({
-          user_id: b.user_id,
-          bet: b.bet,
-          money: b.money
-        })));
-
-        const bet = bets[0];
-
-        if (bet.bet.toLowerCase() === "l") {
-          const smallResults = [0, 2, 4, 6, 8];
-          forcedResult = smallResults[Math.floor(Math.random() * smallResults.length)];
-          console.log(`🚫 Taruhan BESAR, dipaksa hasil KECIL: ${forcedResult}`);
-        } else if (bet.bet.toLowerCase() === "n") {
-          const bigResults = [1, 3, 5, 7, 9];
-          forcedResult = bigResults[Math.floor(Math.random() * bigResults.length)];
-          console.log(`🚫 Taruhan KECIL, dipaksa hasil BESAR: ${forcedResult}`);
-        } else {
-          console.warn(`⚠️ Bet tidak dikenali: ${bet.bet}`);
-        }
-      }
-
-      let response = await axios.get(
-        "https://apilist.tronscanapi.com/api/block?sort=-balance&start=0&limit=20",
-        {
+      if (isAdminManipulatedResult) {
+      } else {
+        let response = await axios({
+          method: "GET",
+          url: "https://apilist.tronscanapi.com/api/block?sort=-balance&start=0&limit=20&producer=&number=&start_timestamp=&end_timestamp=",
           headers: {
             "TRON-PRO-API-KEY": process.env.TRON_API_KEY,
           },
+        });
+
+        const NextBlock = response.data.data
+          .map((item) => {
+            return {
+              id: item.number,
+              hash: item.hash,
+              blockTime: item.timestamp,
+              timeSS: moment(item.timestamp).format("ss"),
+            };
+          })
+          .find((item) => item.timeSS === "54");
+
+        if (NextBlock === undefined) {
+          throw new Error("NextBlock is undefined");
         }
-      );
 
-      const NextBlock = response.data.data
-        .map((item) => ({
-          id: item.number,
-          hash: item.hash,
-          blockTime: item.timestamp,
-          timeSS: moment(item.timestamp).format("ss"),
-        }))
-        .find((item) => item.timeSS === "54");
+        const BlockId = NextBlock.id;
+        const BlockTime = NextBlock.blockTime;
+        const Hash = NextBlock.hash;
 
-      if (!NextBlock) {
-        console.error("❌ NextBlock tidak ditemukan!");
-        throw new Error("NextBlock is undefined");
+        let Result = generateResultByHash(Hash);
+
+        // console.log({
+        //    BlockId,
+        //    BlockTime: moment(BlockTime).format("HH:mm:ss"),
+        //    Hash,
+        //    Result,
+        // })
+
+        await connection.query(
+          `
+               UPDATE trx_wingo_game
+               SET result = ?, status = ?, block_id = ?, block_time = ?, hash = ?, release_status = 1
+               WHERE period = ? AND game = ?
+               `,
+          [
+            Result,
+            TRX_WINGO_GAME_STATUS_MAP.COMPLETED,
+            BlockId,
+            BlockTime,
+            Hash,
+            PendingGamePeriod,
+            join,
+          ],
+        );
+
+        // console.log("TRX WINGO GAME PENDING GAME INSERTIONS Successfully")
       }
-
-      const BlockId = NextBlock.id;
-      const BlockTime = NextBlock.blockTime;
-      const Hash = NextBlock.hash;
-
-      const Result = forcedResult !== null ? forcedResult : generateResultByHash(Hash);
-      const color = Result % 2 === 0 ? "red" : "green";
-
-      console.log(`🎯 Hasil final game ${game} periode ${PendingGamePeriod} = ${Result} (${color})`);
-
-      await connection.query(
-        `
-          UPDATE trx_wingo_game
-          SET result = ?, status = ?, block_id = ?, block_time = ?, hash = ?, release_status = 1, color = ?
-          WHERE period = ? AND game = ?
-        `,
-        [
-          Result,
-          TRX_WINGO_GAME_STATUS_MAP.COMPLETED,
-          BlockId,
-          BlockTime,
-          Hash,
-          color,
-          PendingGamePeriod,
-          join,
-        ]
-      );
     }
 
-    // Tambah game baru
     let gameRepresentationId = GameRepresentationIds.TRXWINGO[game];
     let NewGamePeriod = generatePeriod(gameRepresentationId);
+
     let timeNow = Date.now();
 
     const [trxWinGoTest] = await connection.query(
       "SELECT period FROM trx_wingo_game WHERE period = ? AND game = ?",
-      [NewGamePeriod, join]
+      [NewGamePeriod, join],
     );
 
-    if (trxWinGoTest.length > 0) return;
+    if (trxWinGoTest.length > 0) {
+      return;
+    }
 
     await connection.query(
       "INSERT INTO trx_wingo_game SET period = ?, result = 0, game = ?, status = 0, block_id = 0, block_time = '', hash = '', time = ?",
-      [NewGamePeriod, join, timeNow]
+      [NewGamePeriod, join, timeNow],
     );
-
-    console.log(`🆕 Game baru dibuat: ${NewGamePeriod} untuk game ${game}`);
+    // console.log("TRX WINGO GAME INSERT SUCCESSFULLY")
   } catch (error) {
-    console.error("🔥 Error di addTrxWingo:", error.message || error);
+    if (error?.response?.status === 403) {
+      console.log("API Quota Exceeded for 30 seconds");
+      console.log(error.response.data.Error);
+    } else console.log(error);
   }
 };
-
 
 const handlingTrxWingo1P = async (typeid) => {
   try {
